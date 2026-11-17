@@ -1,19 +1,20 @@
-import java.awt.*;
-import java.awt.event.MouseAdapter;
-import java.awt.event.MouseEvent;
-import java.util.List;
-import java.util.Map;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.border.LineBorder;
 import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
 import javax.swing.table.JTableHeader;
+import java.awt.*;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
+import java.util.List;
+import java.util.Map;
 
 public class BloodDonationApp extends JFrame {
     private CardLayout cardLayout;
     private JPanel mainPanel;
     private JTabbedPane tabs;
+    private JPanel kpiPanel;
     private BloodDonationDAO dao;
 
     // Session State
@@ -32,9 +33,16 @@ public class BloodDonationApp extends JFrame {
     // KPI Labels
     private JLabel totalUnitsVal, donorsVal, pendingReqVal, criticalVal;
 
+    // Role-Restricted Action Buttons
+    private JButton manualEditBtn;
+    private JButton callNextBtn;
+
     // Tables
     private JTable stockTable, reqTable, queueTable;
     private DefaultTableModel stockTableModel, reqTableModel, queueTableModel;
+
+    // Pre-built Tab Panels
+    private JPanel stockTabPanel, donorTabPanel, queueTabPanel, requestTabPanel, manageReqTabPanel;
 
     public BloodDonationApp() {
         dao = new BloodDonationDAO();
@@ -53,6 +61,9 @@ public class BloodDonationApp extends JFrame {
         add(mainPanel);
     }
 
+    // ==========================================
+    // 1. LOGIN SCREEN
+    // ==========================================
     private JPanel createLoginPanel() {
         JPanel container = new JPanel(new GridBagLayout());
         container.setBackground(BG_COLOR);
@@ -125,7 +136,8 @@ public class BloodDonationApp extends JFrame {
             }
 
             currentUserId = session[0];
-            currentUserRole = dbRole;
+            // Enforce the selected portal view mode (USER mode vs ADMIN mode)
+            currentUserRole = expectedRole.toUpperCase();
             currentUserName = session[2];
 
             configureRoleAccess();
@@ -136,21 +148,42 @@ public class BloodDonationApp extends JFrame {
         }
     }
 
+    // Configure exact tabs, KPI cards, and buttons based on role
     private void configureRoleAccess() {
-        if (tabs != null) {
-            boolean isAdmin = "ADMIN".equalsIgnoreCase(currentUserRole);
-            tabs.setEnabledAt(0, isAdmin);
-            tabs.setEnabledAt(2, isAdmin);
-            tabs.setEnabledAt(4, isAdmin);
+        boolean isAdmin = "ADMIN".equalsIgnoreCase(currentUserRole);
 
-            if (!isAdmin) {
-                tabs.setSelectedIndex(1);
+        // 1. Show/Hide the 4 KPI summary cards at the top
+        if (kpiPanel != null) {
+            kpiPanel.setVisible(isAdmin);
+        }
+
+        // 2. Show/Hide Admin-exclusive action buttons
+        if (manualEditBtn != null) {
+            manualEditBtn.setVisible(isAdmin);
+        }
+        if (callNextBtn != null) {
+            callNextBtn.setVisible(isAdmin);
+        }
+
+        // 3. Rebuild JTabbedPane strictly with allowed tabs for each role
+        if (tabs != null) {
+            tabs.removeAll();
+            if (isAdmin) {
+                tabs.addTab("Inventory Overview", stockTabPanel);
+                tabs.addTab("Live Donor Queue", queueTabPanel);
+                tabs.addTab("Manage Requests", manageReqTabPanel);
             } else {
-                tabs.setSelectedIndex(0);
+                tabs.addTab("Register Donor", donorTabPanel);
+                tabs.addTab("Live Donor Queue", queueTabPanel);
+                tabs.addTab("Request Blood", requestTabPanel);
             }
+            tabs.setSelectedIndex(0);
         }
     }
 
+    // ==========================================
+    // 2. MAIN DASHBOARD PANEL
+    // ==========================================
     private JPanel createDashboardPanel() {
         JPanel panel = new JPanel(new BorderLayout());
         panel.setBackground(BG_COLOR);
@@ -169,20 +202,27 @@ public class BloodDonationApp extends JFrame {
         header.add(logo, BorderLayout.WEST);
         header.add(logoutBtn, BorderLayout.EAST);
 
+        // Initialize all tab panels once
+        stockTabPanel = createStockTab();
+        donorTabPanel = createDonorTab();
+        queueTabPanel = createDonorQueueTab();
+        requestTabPanel = createBloodRequestTab();
+        manageReqTabPanel = createManageRequestsTab();
+
         tabs = new JTabbedPane();
         tabs.setFont(new Font("Segoe UI", Font.BOLD, 13));
-        tabs.addTab("Inventory Overview", createStockTab());
-        tabs.addTab("Register Donor", createDonorTab());
-        tabs.addTab("Live Donor Queue", createDonorQueueTab());
-        tabs.addTab("Request Blood", createBloodRequestTab());
-        tabs.addTab("Manage Requests", createManageRequestsTab());
+        tabs.addChangeListener(e -> {
+            if (tabs.getTabCount() > 0) {
+                refreshAllData();
+            }
+        });
 
-        tabs.addChangeListener(e -> refreshAllData());
+        kpiPanel = createKPICardsPanel();
 
         JPanel topContainer = new JPanel(new BorderLayout());
         topContainer.setBackground(BG_COLOR);
         topContainer.add(header, BorderLayout.NORTH);
-        topContainer.add(createKPICardsPanel(), BorderLayout.CENTER);
+        topContainer.add(kpiPanel, BorderLayout.CENTER);
 
         panel.add(topContainer, BorderLayout.NORTH);
         panel.add(tabs, BorderLayout.CENTER);
@@ -191,21 +231,22 @@ public class BloodDonationApp extends JFrame {
     }
 
     private JPanel createKPICardsPanel() {
-        JPanel kpiPanel = new JPanel(new GridLayout(1, 4, 15, 0));
-        kpiPanel.setBackground(BG_COLOR);
-        kpiPanel.setBorder(new EmptyBorder(12, 20, 12, 20));
+        JPanel panel = new JPanel(new GridLayout(1, 4, 15, 0));
+        panel.setBackground(BG_COLOR);
+        panel.setBorder(new EmptyBorder(12, 20, 12, 20));
 
         totalUnitsVal = new JLabel("0", JLabel.CENTER);
         donorsVal = new JLabel("0", JLabel.CENTER);
         pendingReqVal = new JLabel("0", JLabel.CENTER);
         criticalVal = new JLabel("0", JLabel.CENTER);
 
-        kpiPanel.add(buildClickableCard("Total Blood Units", totalUnitsVal, new Color(37, 99, 235), 0));
-        kpiPanel.add(buildClickableCard("Registered Donors", donorsVal, new Color(16, 185, 129), 2));
-        kpiPanel.add(buildClickableCard("Pending Requests", pendingReqVal, new Color(245, 158, 11), 4));
-        kpiPanel.add(buildClickableCard("Critical Shortages", criticalVal, new Color(220, 38, 38), 0));
+        // Map to Admin Tab Indices: 0 = Inventory Overview, 1 = Live Donor Queue, 2 = Manage Requests
+        panel.add(buildClickableCard("Total Blood Units", totalUnitsVal, new Color(37, 99, 235), 0));
+        panel.add(buildClickableCard("Registered Donors", donorsVal, new Color(16, 185, 129), 1));
+        panel.add(buildClickableCard("Pending Requests", pendingReqVal, new Color(245, 158, 11), 2));
+        panel.add(buildClickableCard("Critical Shortages", criticalVal, new Color(220, 38, 38), 0));
 
-        return kpiPanel;
+        return panel;
     }
 
     private JPanel buildClickableCard(String title, JLabel valueLabel, Color accent, int targetTabIndex) {
@@ -235,7 +276,7 @@ public class BloodDonationApp extends JFrame {
         card.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
-                if (tabs != null && tabs.isEnabledAt(targetTabIndex)) {
+                if (tabs != null && targetTabIndex < tabs.getTabCount()) {
                     tabs.setSelectedIndex(targetTabIndex);
                 }
             }
@@ -256,6 +297,9 @@ public class BloodDonationApp extends JFrame {
         return card;
     }
 
+    // ==========================================
+    // 3. TAB: STOCK INVENTORY VIEW (ADMIN)
+    // ==========================================
     private JPanel createStockTab() {
         JPanel panel = new JPanel(new BorderLayout(10, 10));
         panel.setBackground(BG_COLOR);
@@ -271,10 +315,11 @@ public class BloodDonationApp extends JFrame {
         JPanel buttonBar = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 5));
         buttonBar.setBackground(BG_COLOR);
 
-        JButton manualEditBtn = createStyledButton("Manually Adjust Stock Count", new Color(37, 99, 235));
+        manualEditBtn = createStyledButton("Manually Adjust Stock Count", new Color(37, 99, 235));
         JButton refreshBtn = createStyledButton("Refresh Stock", PRIMARY_RED);
 
         manualEditBtn.addActionListener(e -> {
+            if (!"ADMIN".equalsIgnoreCase(currentUserRole)) return;
             int row = stockTable.getSelectedRow();
             if (row == -1) {
                 JOptionPane.showMessageDialog(this, "Please select a blood group row from the table first.", "Selection Needed", JOptionPane.WARNING_MESSAGE);
@@ -307,6 +352,9 @@ public class BloodDonationApp extends JFrame {
         return panel;
     }
 
+    // ==========================================
+    // 4. TAB: REGISTER DONOR (USER)
+    // ==========================================
     private JPanel createDonorTab() {
         JPanel panel = new JPanel(new GridBagLayout());
         panel.setBackground(BG_COLOR);
@@ -358,8 +406,9 @@ public class BloodDonationApp extends JFrame {
                     JOptionPane.showMessageDialog(this, "Registration Successful!\n\nYour Donor Ticket Number: " + tokenResult, "Ticket Issued", JOptionPane.INFORMATION_MESSAGE);
                     nameField.setText(""); emailField.setText(""); phoneField.setText(""); ageField.setText(""); cityField.setText("");
                     refreshAllData();
-                    if ("ADMIN".equalsIgnoreCase(currentUserRole)) {
-                        tabs.setSelectedIndex(2);
+                    // Switch User directly to Live Donor Queue tab (Index 1 in User View)
+                    if (!"ADMIN".equalsIgnoreCase(currentUserRole) && tabs.getTabCount() > 1) {
+                        tabs.setSelectedIndex(1);
                     }
                 } else {
                     JOptionPane.showMessageDialog(this, "Could not register donor. Ensure database configuration is correct.", "Error", JOptionPane.ERROR_MESSAGE);
@@ -391,6 +440,9 @@ public class BloodDonationApp extends JFrame {
         return panel;
     }
 
+    // ==========================================
+    // 5. TAB: LIVE DONOR QUEUE (USER VIEW-ONLY / ADMIN ACTION)
+    // ==========================================
     private JPanel createDonorQueueTab() {
         JPanel panel = new JPanel(new BorderLayout(10, 10));
         panel.setBackground(BG_COLOR);
@@ -406,10 +458,11 @@ public class BloodDonationApp extends JFrame {
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 5));
         actions.setBackground(BG_COLOR);
 
-        JButton callNextBtn = createStyledButton("Call & Complete Selected Donation", new Color(16, 185, 129));
+        callNextBtn = createStyledButton("Call & Complete Selected Donation", new Color(16, 185, 129));
         JButton refreshQueueBtn = createStyledButton("Refresh Queue", PRIMARY_RED);
 
         callNextBtn.addActionListener(e -> {
+            if (!"ADMIN".equalsIgnoreCase(currentUserRole)) return;
             int row = queueTable.getSelectedRow();
             if (row == -1) {
                 JOptionPane.showMessageDialog(this, "Please select a donor ticket row to process.", "Selection Needed", JOptionPane.WARNING_MESSAGE);
@@ -437,6 +490,9 @@ public class BloodDonationApp extends JFrame {
         return panel;
     }
 
+    // ==========================================
+    // 6. TAB: REQUEST BLOOD (USER)
+    // ==========================================
     private JPanel createBloodRequestTab() {
         JPanel panel = new JPanel(new GridBagLayout());
         panel.setBackground(BG_COLOR);
@@ -485,9 +541,6 @@ public class BloodDonationApp extends JFrame {
                     JOptionPane.showMessageDialog(this, "Blood request submitted for Hospital Admin review!");
                     patientName.setText(""); unitsNeeded.setText(""); hospitalField.setText(""); cityField.setText(""); phoneField.setText("");
                     refreshAllData();
-                    if ("ADMIN".equalsIgnoreCase(currentUserRole)) {
-                        tabs.setSelectedIndex(4);
-                    }
                 } else {
                     JOptionPane.showMessageDialog(this, "Failed to submit request.", "Error", JOptionPane.ERROR_MESSAGE);
                 }
@@ -514,6 +567,9 @@ public class BloodDonationApp extends JFrame {
         return panel;
     }
 
+    // ==========================================
+    // 7. TAB: MANAGE REQUESTS (ADMIN)
+    // ==========================================
     private JPanel createManageRequestsTab() {
         JPanel panel = new JPanel(new BorderLayout(10, 10));
         panel.setBackground(BG_COLOR);
@@ -545,6 +601,7 @@ public class BloodDonationApp extends JFrame {
     }
 
     private void handleRequestAction(String action) {
+        if (!"ADMIN".equalsIgnoreCase(currentUserRole)) return;
         int row = reqTable.getSelectedRow();
         if (row == -1) {
             JOptionPane.showMessageDialog(this, "Please select a request row from the table first.", "Selection Needed", JOptionPane.WARNING_MESSAGE);
@@ -626,4 +683,4 @@ public class BloodDonationApp extends JFrame {
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> new BloodDonationApp().setVisible(true));
     }
-} 
+}
